@@ -1,841 +1,408 @@
-x
-
 import os
-import uuid
 from datetime import datetime
 import pandas as pd
 import streamlit as st
-# ============================================================
-# CẤU HÌNH ỨNG DỤNG
-# ============================================================
-st.set_page_config(
-    page_title="Order Nhà Hàng - Dr Bình",
-    page_icon="🍽️",
-    layout="wide",
-)
-HISTORY_FILE = "history.csv"
-TABLES = [f"Bàn {i}" for i in range(1, 21)]
-DISCOUNT_RATE = 0.05
-DISCOUNT_MINIMUM = 1_000_000
-# ============================================================
-# MENU NHÀ HÀNG
-# ============================================================
+ 
+st.set_page_config(page_title="Order Nhà Hàng", layout="wide")
+ 
+# Đường dẫn file dữ liệu dùng chung trên máy chủ
+CSV_FILE = "history.csv"
+ 
+# Thực đơn cố định của nhà hàng Mr. Bình
 menu = {
-    "Đồ ăn": {
-        "Pizza Hải Sản": 150000,
-        "Mì Ý Bò Bằm": 95000,
-        "Burger Gà": 65000,
-        "Salad Trộn": 50000,
-        "Bít tết Bò Mỹ": 250000,
-        "Sườn nướng BBQ": 180000,
-        "Cánh gà chiên mắm": 75000,
-        "Lẩu cá diêu hồng": 200000,
-        "Lẩu Thái hải sản": 300000,
-    },
-    "Thức uống": {
-        "Coca Cola": 20000,
-        "Trà Đào Cam Sả": 35000,
-        "Cà Phê Sữa": 25000,
-        "Nước Suối": 10000,
-        "Sinh tố Bơ": 45000,
-        "Nước ép cam": 40000,
-        "Mojito chanh dây": 55000,
-        "Bia Heineken": 30000,
-    },
+   "Đồ ăn": {
+       "Pizza Hải Sản": 150000,
+       "Mì Ý Bò Bằm": 95000,
+       "Burger Gà": 65000,
+       "Salad Trộn": 50000,
+       "Bít tết Bò Mỹ": 250000,
+       "Sườn nướng BBQ": 180000,
+       "Cánh gà chiên mắm": 75000,
+       "Lẩu cá diêu hồng": 200000,
+       "Lẩu Thái hải sản": 300000,
+   },
+   "Thức uống": {
+       "Coca Cola": 20000,
+       "Trà Đào Cam Sả": 35000,
+       "Cà Phê Sữa": 25000,
+       "Nước Suối": 10000,
+       "Sinh tố Bơ": 45000,
+       "Nước ép cam": 40000,
+       "Mojito chanh dây": 55000,
+       "Bia Heineken": 30000,
+   },
 }
-# ============================================================
-# KHỞI TẠO SESSION STATE
-# ============================================================
-if "orders" not in st.session_state:
-    st.session_state.orders = {
-        table: {} for table in TABLES
-    }
-if "table_status" not in st.session_state:
-    st.session_state.table_status = {
-        table: "🟢 Trống" for table in TABLES
-    }
-if "admin_logged_in" not in st.session_state:
-    st.session_state.admin_logged_in = False
+ 
+if "order_dict" not in st.session_state:
+   st.session_state.order_dict = {}
+ 
+# Tự động tải dữ liệu lịch sử cũ từ file CSV lên hệ thống khi khởi động ứng dụng
 if "history" not in st.session_state:
-    st.session_state.history = []
-# ============================================================
-# HÀM ĐỌC LỊCH SỬ
-# ============================================================
-def load_history():
-    if not os.path.exists(HISTORY_FILE):
-        return []
-    try:
-        df = pd.read_csv(HISTORY_FILE, encoding="utf-8-sig")
-        if df.empty:
-            return []
-        required_columns = [
-            "Mã hóa đơn",
-            "Thời gian",
-            "Bàn",
-            "Tên món",
-            "Số lượng",
-            "Đơn giá",
-            "Thành tiền",
-            "Tạm tính",
-            "Giảm giá",
-            "Tổng thanh toán",
-            "Phương thức thanh toán",
-        ]
-        for column in required_columns:
-            if column not in df.columns:
-                df[column] = ""
-        return df.to_dict(orient="records")
-    except Exception:
-        return []
-# ============================================================
-# HÀM LƯU LỊCH SỬ
-# ============================================================
-def save_history(history):
-    try:
-        df = pd.DataFrame(history)
-        df.to_csv(
-            HISTORY_FILE,
-            index=False,
-            encoding="utf-8-sig",
-        )
-        return True
-    except Exception as e:
-        st.error(f"❌ Không thể lưu dữ liệu: {e}")
-        return False
-# ============================================================
-# HÀM TẠO MÃ HÓA ĐƠN
-# ============================================================
-def create_invoice_id():
-    now = datetime.now()
-    date_part = now.strftime("%Y%m%d")
-    random_part = uuid.uuid4().hex[:4].upper()
-    return f"HD-{date_part}-{random_part}"
-# ============================================================
-# HÀM TÍNH TIỀN
-# ============================================================
-def calculate_order(order):
-    subtotal = sum(
-        item["Thành tiền"]
-        for item in order.values()
-    )
-    if subtotal > DISCOUNT_MINIMUM:
-        discount = subtotal * DISCOUNT_RATE
-    else:
-        discount = 0
-    total = subtotal - discount
-    return subtotal, discount, total
-# ============================================================
-# HÀM THÊM MÓN
-# ============================================================
-def add_item_to_table(table, item, price, quantity):
-    if item in st.session_state.orders[table]:
-        st.session_state.orders[table][item]["Số lượng"] += quantity
-        st.session_state.orders[table][item]["Thành tiền"] = (
-            st.session_state.orders[table][item]["Số lượng"]
-            * price
-        )
-    else:
-        st.session_state.orders[table][item] = {
-            "Tên món": item,
-            "Đơn giá": price,
-            "Số lượng": quantity,
-            "Thành tiền": price * quantity,
-        }
-    st.session_state.table_status[table] = "🔴 Đang phục vụ"
-# ============================================================
-# HÀM XÓA MÓN
-# ============================================================
-def remove_item_from_table(table, item):
-    if item in st.session_state.orders[table]:
-        del st.session_state.orders[table][item]
-    if not st.session_state.orders[table]:
-        st.session_state.table_status[table] = "🟢 Trống"
-# ============================================================
-# HÀM THANH TOÁN
-# ============================================================
-def process_payment(table, payment_method):
-    order = st.session_state.orders[table]
-    if not order:
-        st.error("❌ Bàn này hiện không có món để thanh toán.")
-        return
-    subtotal, discount, total = calculate_order(order)
-    invoice_id = create_invoice_id()
-    now = datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-    new_rows = []
-    for item in order.values():
-        new_rows.append(
-            {
-                "Mã hóa đơn": invoice_id,
-                "Thời gian": now,
-                "Bàn": table,
-                "Tên món": item["Tên món"],
-                "Số lượng": item["Số lượng"],
-                "Đơn giá": item["Đơn giá"],
-                "Thành tiền": item["Thành tiền"],
-                "Tạm tính": subtotal,
-                "Giảm giá": discount,
-                "Tổng thanh toán": total,
-                "Phương thức thanh toán": payment_method,
-            }
-        )
-    st.session_state.history.extend(new_rows)
-    if save_history(st.session_state.history):
-        st.session_state.orders[table] = {}
-        st.session_state.table_status[table] = "🟢 Trống"
-        st.session_state.last_invoice = {
-            "Mã hóa đơn": invoice_id,
-            "Thời gian": now,
-            "Bàn": table,
-            "Chi tiết": new_rows,
-            "Tạm tính": subtotal,
-            "Giảm giá": discount,
-            "Tổng thanh toán": total,
-            "Phương thức": payment_method,
-        }
-        st.success(
-            f"✅ Thanh toán thành công! Mã hóa đơn: {invoice_id}"
-        )
-        st.rerun()
-# ============================================================
-# TẢI DỮ LIỆU
-# ============================================================
-if not st.session_state.history:
-    st.session_state.history = load_history()
-# ============================================================
-# SIDEBAR
-# ============================================================
-st.sidebar.title("🍽️ NHÀ HÀNG DR BÌNH")
-page = st.sidebar.radio(
-    "📋 Chọn chức năng",
-    [
-        "🍽️ Order",
-        "🪑 Quản lý bàn",
-        "🧾 Hóa đơn",
-        "🔑 Admin",
-    ],
-)
-# ============================================================
-# TRANG ORDER
-# ============================================================
+   if os.path.exists(CSV_FILE):
+       try:
+           # Đọc file CSV lưu trữ chung
+           df_loaded = pd.read_csv(CSV_FILE)
+           # Chuyển đổi ngược lại thành danh sách dict để duy trì tính nhất quán của code
+           st.session_state.history = df_loaded.to_dict(orient="records")
+       except Exception:
+           st.session_state.history = []
+   else:
+       st.session_state.history = []
+ 
+if "admin_logged_in" not in st.session_state:
+   st.session_state.admin_logged_in = False
+ 
+# Thanh điều hướng dạng RADIO hiển thị trực diện ngay trên Sidebar
+page = st.sidebar.radio("📋 Chọn trang hệ thống", ["🍽️ Order", "🔑 Admin"])
+ 
 if page == "🍽️ Order":
-    st.title("🍽️ HỆ THỐNG ORDER NHÀ HÀNG DR BÌNH")
-    st.caption(
-        "Quản lý order nhanh chóng - chính xác - thuận tiện"
-    )
-    col1, col2 = st.columns([1, 1.5])
-    # --------------------------------------------------------
-    # CHỌN MÓN
-    # --------------------------------------------------------
-    with col1:
-        st.subheader("🪑 Chọn bàn")
-        table = st.selectbox(
-            "Bàn phục vụ",
-            TABLES,
-        )
-        st.info(
-            f"Trạng thái: {st.session_state.table_status[table]}"
-        )
-        st.markdown("---")
-        st.subheader("🍔 Chọn món")
-        search = st.text_input(
-            "🔍 Tìm món",
-            placeholder="Nhập tên món...",
-        )
-        category = st.selectbox(
-            "📂 Danh mục",
-            list(menu.keys()),
-        )
-        available_items = list(
-            menu[category].keys()
-        )
-        if search:
-            available_items = [
-                item
-                for item in available_items
-                if search.lower() in item.lower()
-            ]
-        if available_items:
-            item = st.selectbox(
-                "🍽️ Món",
-                available_items,
-            )
-            price = menu[category][item]
-            st.write(
-                f"💰 Đơn giá: **{price:,.0f} VNĐ**"
-            )
-            quantity = st.number_input(
-                "🔢 Số lượng",
-                min_value=1,
-                value=1,
-                step=1,
-            )
-            if st.button(
-                "➕ THÊM VÀO ORDER",
-                use_container_width=True,
-            ):
-                add_item_to_table(
-                    table,
-                    item,
-                    price,
-                    quantity,
-                )
-                st.success(
-                    f"Đã thêm {quantity} x {item}"
-                )
-                st.rerun()
-        else:
-            st.warning(
-                "Không tìm thấy món phù hợp."
-            )
-    # --------------------------------------------------------
-    # GIỎ HÀNG
-    # --------------------------------------------------------
-    with col2:
-        st.subheader(
-            f"🛒 ORDER - {table}"
-        )
-        order = st.session_state.orders[table]
-        if order:
-            for item_name, item in list(
-                order.items()
-            ):
-                item_col1, item_col2, item_col3 = st.columns(
-                    [3, 1, 1]
-                )
-                with item_col1:
-                    st.write(
-                        f"**{item_name}**"
-                    )
-                    st.caption(
-                        f"{item['Đơn giá']:,.0f} VNĐ"
-                    )
-                with item_col2:
-                    st.write(
-                        f"SL: {item['Số lượng']}"
-                    )
-                with item_col3:
-                    if st.button(
-                        "🗑️",
-                        key=f"delete_{table}_{item_name}",
-                    ):
-                        remove_item_from_table(
-                            table,
-                            item_name,
-                        )
-                        st.rerun()
-                st.write(
-                    f"Thành tiền: **{item['Thành tiền']:,.0f} VNĐ**"
-                )
-                st.markdown("---")
-            subtotal, discount, total = calculate_order(
-                order
-            )
-            st.write(
-                f"**Tạm tính:** {subtotal:,.0f} VNĐ"
-            )
-            if discount > 0:
-                st.write(
-                    f"**Giảm giá 5%:** -{discount:,.0f} VNĐ"
-                )
-            st.metric(
-                "💰 TỔNG THANH TOÁN",
-                f"{total:,.0f} VNĐ",
-            )
-            payment_method = st.selectbox(
-                "💳 Phương thức thanh toán",
-                [
-                    "💵 Tiền mặt",
-                    "🏦 Chuyển khoản",
-                    "💳 Thẻ",
-                ],
-            )
-            col_pay, col_clear = st.columns(2)
-            with col_pay:
-                if st.button(
-                    "💳 THANH TOÁN",
-                    use_container_width=True,
-                ):
-                    process_payment(
-                        table,
-                        payment_method,
-                    )
-            with col_clear:
-                if st.button(
-                    "🗑️ XÓA ORDER",
-                    use_container_width=True,
-                ):
-                    st.session_state.orders[
-                        table
-                    ] = {}
-                    st.session_state.table_status[
-                        table
-                    ] = "🟢 Trống"
-                    st.rerun()
-        else:
-            st.info(
-                "🛒 Bàn này chưa có món."
-            )
-# ============================================================
-# QUẢN LÝ BÀN
-# ============================================================
-elif page == "🪑 Quản lý bàn":
-    st.title("🪑 QUẢN LÝ 20 BÀN")
-    for start in range(0, 20, 4):
-        cols = st.columns(4)
-        for index, table in enumerate(
-            TABLES[start:start + 4]
-        ):
-            with cols[index]:
-                status = st.session_state.table_status[
-                    table
-                ]
-                order_count = len(
-                    st.session_state.orders[table]
-                )
-                st.markdown(
-                    f"""
-                    ### {table}
-                    **{status}**
-                    Số món: **{order_count}**
-                    """
-                )
-                if st.button(
-                    f"📋 Xem {table}",
-                    key=f"view_{table}",
-                    use_container_width=True,
-                ):
-                    st.session_state.selected_table = table
-                    st.info(
-                        f"Đã chọn {table}"
-                    )
-# ============================================================
-# TRANG HÓA ĐƠN
-# ============================================================
-elif page == "🧾 Hóa đơn":
-    st.title("🧾 LỊCH SỬ HÓA ĐƠN")
-    if not st.session_state.history:
-        st.info(
-            "Chưa có hóa đơn nào."
-        )
-    else:
-        df = pd.DataFrame(
-            st.session_state.history
-        )
-        if "Mã hóa đơn" in df.columns:
-            invoice_ids = (
-                df["Mã hóa đơn"]
-                .dropna()
-                .unique()
-                .tolist()
-            )
-            selected_invoice = st.selectbox(
-                "🔍 Chọn hóa đơn",
-                invoice_ids,
-            )
-            invoice_df = df[
-                df["Mã hóa đơn"]
-                == selected_invoice
-            ]
-            if not invoice_df.empty:
-                first_row = invoice_df.iloc[0]
-                st.subheader(
-                    "🏪 NHÀ HÀNG DR BÌNH"
-                )
-                st.write(
-                    f"**Mã hóa đơn:** {selected_invoice}"
-                )
-                st.write(
-                    f"**Thời gian:** {first_row['Thời gian']}"
-                )
-                st.write(
-                    f"**Bàn:** {first_row['Bàn']}"
-                )
-                st.markdown("---")
-                st.dataframe(
-                    invoice_df[
-                        [
-                            "Tên món",
-                            "Số lượng",
-                            "Đơn giá",
-                            "Thành tiền",
-                        ]
-                    ],
-                    use_container_width=True,
-                    hide_index=True,
-                )
-                st.markdown("---")
-                st.write(
-                    f"**Tạm tính:** {first_row['Tạm tính']:,.0f} VNĐ"
-                )
-                st.write(
-                    f"**Giảm giá:** {first_row['Giảm giá']:,.0f} VNĐ"
-                )
-                st.metric(
-                    "TỔNG THANH TOÁN",
-                    f"{first_row['Tổng thanh toán']:,.0f} VNĐ",
-                )
-                st.write(
-                    f"**Thanh toán:** {first_row['Phương thức thanh toán']}"
-                )
-        st.markdown("---")
-        st.subheader(
-            "📋 Toàn bộ lịch sử giao dịch"
-        )
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True,
-        )
-# ============================================================
-# TRANG ADMIN
-# ============================================================
+   st.title("🍽️ Hệ thống Order Nhà Hàng_Dr Bình")
+   st.caption("Ghi nhận order nhanh chóng và chính xác theo thời gian thực")
+ 
+   col1, col2 = st.columns([1, 1.3])
+ 
+   with col1:
+       st.subheader("Chọn Món")
+       table_number = st.selectbox(
+           "🪑 Chọn số bàn", [f"Bàn {i}" for i in range(1, 21)]
+       )
+       category = st.selectbox("Chọn loại:", list(menu.keys()))
+       item = st.selectbox("Chọn món:", list(menu[category].keys()))
+       quantity = st.number_input("Số lượng:", min_value=1, step=1, value=1)
+ 
+       if st.button("Thêm vào giỏ"):
+           price = menu[category][item]
+ 
+           if item in st.session_state.order_dict:
+               st.session_state.order_dict[item]["Số lượng"] += quantity
+               st.session_state.order_dict[item]["Thành tiền"] = (
+                   st.session_state.order_dict[item]["Số lượng"] * price
+               )
+               st.session_state.order_dict[item]["Bàn"] = table_number
+           else:
+               st.session_state.order_dict[item] = {
+"Bàn": table_number,
+                   "Tên món": item,
+                   "Đơn giá": price,
+                   "Số lượng": quantity,
+                   "Thành tiền": price * quantity,
+               }
+           st.success(f"Đã thêm {item} vào giỏ!")
+           st.rerun()
+ 
+   with col2:
+       st.subheader("Giỏ hàng hiện tại")
+ 
+       if st.session_state.order_dict:
+           df = pd.DataFrame.from_dict(
+               st.session_state.order_dict, orient="index"
+           )
+           st.table(
+               df[["Bàn", "Tên món", "Đơn giá", "Số lượng", "Thành tiền"]]
+           )
+ 
+           tam_tinh = df["Thành tiền"].sum()
+           # Giảm giá 5% cho hóa đơn trên 1 triệu đồng
+           giam_gia = tam_tinh * 0.05 if tam_tinh > 1000000 else 0
+           tong_thanh_toan = tam_tinh - giam_gia
+ 
+           st.write(f"**Tạm tính:** {tam_tinh:,.0f} VNĐ")
+           if giam_gia > 0:
+               st.write(f"**Giảm giá (5% > 1M):** -{giam_gia:,.0f} VNĐ")
+           st.metric("Tổng thanh toán thực tế", f"{tong_thanh_toan:,.0f} VNĐ")
+ 
+           col_btn1, col_btn2 = st.columns(2)
+ 
+           with col_btn1:
+               if st.button("💳 Thanh toán"):
+                   now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+ 
+                   # Ghi nhận các món vào danh sách lịch sử
+                   for row in st.session_state.order_dict.values():
+                       st.session_state.history.append(
+                           {
+                               "Thời gian": now_str,
+                               "Bàn": row["Bàn"],
+                               "Tên món": row["Tên món"],
+                               "Số lượng": row["Số lượng"],
+                               "Thành tiền": row["Thành tiền"],
+                           }
+                       )
+ 
+                   # ĐỒNG BỘ: Lưu dữ liệu mới xuống tệp tin CSV dùng chung
+                   try:
+                       df_history = pd.DataFrame(st.session_state.history)
+                       df_history.to_csv(
+                           CSV_FILE, index=False, encoding="utf-8-sig"
+                       )
+                   except Exception as e:
+                       st.error(f"Lỗi ghi dữ liệu xuống máy chủ: {e}")
+ 
+                   st.success(
+                       "Thanh toán thành công! Dữ liệu đã được lưu trữ vĩnh viễn."
+                   )
+                   st.session_state.order_dict = {}
+                   st.rerun()
+ 
+           with col_btn2:
+               if st.button("🗑️ Xóa toàn bộ giỏ"):
+                   st.session_state.order_dict = {}
+                   st.rerun()
+       else:
+           st.info(
+               "Giỏ hàng đang trống. Hãy chọn món ăn/đồ uống bên trái để lên đơn."
+           )
 elif page == "🔑 Admin":
-    st.title(
-        "🔑 TRANG QUẢN TRỊ & PHÂN TÍCH"
-    )
-    if not st.session_state.admin_logged_in:
-        with st.form("admin_login"):
-            password = st.text_input(
-                "🔐 Mật khẩu quản trị",
-                type="password",
-            )
-            login = st.form_submit_button(
-                "🔑 ĐĂNG NHẬP"
-            )
-            if login:
-                # Có thể thay đổi mật khẩu tại đây
-                if password == "123456":
-                    st.session_state.admin_logged_in = True
-                    st.success(
-                        "Đăng nhập thành công!"
-                    )
-                    st.rerun()
-                else:
-                    st.error(
-                        "❌ Mật khẩu không chính xác!"
-                    )
-        st.stop()
-    col1, col2 = st.columns(
-        [4, 1]
-    )
-    with col1:
-        st.success(
-            "✅ Quyền Admin đã được xác thực"
-        )
-    with col2:
-        if st.button(
-            "🔒 Đăng xuất"
-        ):
-            st.session_state.admin_logged_in = False
-            st.rerun()
-    # ========================================================
-    # ADMIN TABS
-    # ========================================================
-    tab1, tab2, tab3, tab4 = st.tabs(
-        [
-            "📋 Menu",
-            "💰 Doanh thu",
-            "📊 Phân tích",
-            "🪑 Bàn",
-        ]
-    )
-    # ========================================================
-    # TAB MENU
-    # ========================================================
-    with tab1:
-        st.subheader(
-            "📋 DANH SÁCH THỰC ĐƠN"
-        )
-        menu_data = []
-        for category_name in menu:
-            for item_name, price in menu[
-                category_name
-            ].items():
-                menu_data.append(
-                    [
-                        category_name,
-                        item_name,
-                        price,
-                    ]
-                )
-        df_menu = pd.DataFrame(
-            menu_data,
-            columns=[
-                "Danh mục",
-                "Tên món",
-                "Đơn giá",
-            ],
-        )
-        st.dataframe(
-            df_menu,
-            use_container_width=True,
-            hide_index=True,
-        )
-    # ========================================================
-    # TAB DOANH THU
-    # ========================================================
-    with tab2:
-        st.subheader(
-            "💰 DOANH THU"
-        )
-        if st.session_state.history:
-            df_history = pd.DataFrame(
-                st.session_state.history
-            )
-            df_history[
-                "Tổng thanh toán"
-            ] = pd.to_numeric(
-                df_history[
-                    "Tổng thanh toán"
-                ],
-                errors="coerce",
-            ).fillna(0)
-            df_history[
-                "Số lượng"
-            ] = pd.to_numeric(
-                df_history[
-                    "Số lượng"
-                ],
-                errors="coerce",
-            ).fillna(0)
-            total_revenue = (
-                df_history[
-                    "Tổng thanh toán"
-                ].drop_duplicates().sum()
-            )
-            total_items = int(
-                df_history[
-                    "Số lượng"
-                ].sum()
-            )
-            invoice_count = (
-                df_history[
-                    "Mã hóa đơn"
-                ].nunique()
-            )
-            col1, col2, col3 = st.columns(3)
-            col1.metric(
-                "💰 Tổng doanh thu",
-                f"{total_revenue:,.0f} VNĐ",
-            )
-            col2.metric(
-                "🧾 Số hóa đơn",
-                invoice_count,
-            )
-            col3.metric(
-                "🍽️ Số món đã bán",
-                total_items,
-            )
-            st.markdown("---")
-            df_history[
-                "Ngày"
-            ] = pd.to_datetime(
-                df_history["Thời gian"],
-                errors="coerce",
-            ).dt.date
-            daily = (
-                df_history
-                .groupby("Ngày")[
-                    "Tổng thanh toán"
-                ]
-                .first()
-                .reset_index()
-            )
-            st.subheader(
-                "📅 Doanh thu theo ngày"
-            )
-            st.bar_chart(
-                daily.set_index("Ngày")
-            )
-        else:
-            st.info(
-                "Chưa có dữ liệu doanh thu."
-            )
-    # ========================================================
-    # TAB PHÂN TÍCH
-    # ========================================================
-    with tab3:
-        st.subheader(
-            "📊 PHÂN TÍCH BÁN HÀNG"
-        )
-        if st.session_state.history:
-            df = pd.DataFrame(
-                st.session_state.history
-            )
-            df["Số lượng"] = pd.to_numeric(
-                df["Số lượng"],
-                errors="coerce",
-            ).fillna(0)
-            df["Thành tiền"] = pd.to_numeric(
-                df["Thành tiền"],
-                errors="coerce",
-            ).fillna(0)
-            # Món bán chạy
-            item_sales = (
-                df.groupby("Tên món")[
-                    "Số lượng"
-                ]
-                .sum()
-                .sort_values(
-                    ascending=False
-                )
-            )
-            if not item_sales.empty:
-                best_item = item_sales.index[0]
-                best_qty = item_sales.iloc[0]
-                st.info(
-                    f"🏆 Món bán chạy nhất: "
-                    f"**{best_item}** - "
-                    f"{best_qty:.0f} phần"
-                )
-                st.bar_chart(
-                    item_sales
-                )
-            st.markdown("---")
-            # Phân tích giờ
-            df["Thời gian"] = pd.to_datetime(
-                df["Thời gian"],
-                errors="coerce",
-            )
-            df["Giờ"] = (
-                df["Thời gian"]
-                .dt.hour
-            )
-            hourly = (
-                df.groupby("Giờ")[
-                    "Số lượng"
-                ]
-                .sum()
-            )
-            if not hourly.empty:
-                best_hour = hourly.idxmax()
-                best_hour_qty = hourly.max()
-                st.warning(
-                    f"⚡ Khung giờ có lượng món bán "
-                    f"cao nhất: **{best_hour:02d}:00 - "
-                    f"{best_hour + 1:02d}:00** "
-                    f"({best_hour_qty:.0f} phần)"
-                )
-                st.bar_chart(
-                    hourly
-                )
-            st.markdown("---")
-            # Doanh thu theo tháng
-            df["Tháng"] = (
-                df["Thời gian"]
-                .dt.strftime("%m/%Y")
-            )
-            monthly = (
-                df.groupby("Tháng")[
-                    "Tổng thanh toán"
-                ]
-                .first()
-            )
-            if not monthly.empty:
-                st.subheader(
-                    "📅 Doanh thu theo tháng"
-                )
-                st.bar_chart(
-                    monthly
-                )
-        else:
-            st.info(
-                "Chưa có dữ liệu để phân tích."
-            )
-    # ========================================================
-    # TAB QUẢN LÝ BÀN
-    # ========================================================
-    with tab4:
-        st.subheader(
-            "🪑 TRẠNG THÁI 20 BÀN"
-        )
-        for start in range(
-            0,
-            20,
-            4,
-        ):
-            cols = st.columns(4)
-            for index, table in enumerate(
-                TABLES[start:start + 4]
-            ):
-                with cols[index]:
-                    st.markdown(
-                        f"""
-                        ### {table}
-                        {st.session_state.table_status[table]}
-                        """
-                    )
-                    if st.session_state.orders[
-                        table
-                    ]:
-                        st.write(
-                            f"🍽️ {len(st.session_state.orders[table])} món"
-                        )
-                    else:
-                        st.write(
-                            "Không có order"
-                        )
-# ============================================================
-# HIỂN THỊ HÓA ĐƠN VỪA THANH TOÁN
-# ============================================================
-if "last_invoice" in st.session_state:
-    invoice = st.session_state.last_invoice
-    with st.expander(
-        "🧾 Xem hóa đơn vừa thanh toán",
-        expanded=True,
-    ):
-        st.markdown(
-            """
-            <h2 style="text-align:center;">
-            🍽️ NHÀ HÀNG DR BÌNH
-            </h2>
-            <p style="text-align:center;">
-            HÓA ĐƠN THANH TOÁN
-            </p>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.write(
-            f"**Mã hóa đơn:** {invoice['Mã hóa đơn']}"
-        )
-        st.write(
-            f"**Thời gian:** {invoice['Thời gian']}"
-        )
-        st.write(
-            f"**Bàn:** {invoice['Bàn']}"
-        )
-        invoice_df = pd.DataFrame(
-            invoice["Chi tiết"]
-        )
-        st.dataframe(
-            invoice_df[
-                [
-                    "Tên món",
-                    "Số lượng",
-                    "Đơn giá",
-                    "Thành tiền",
-                ]
-            ],
-            use_container_width=True,
-            hide_index=True,
-        )
-        st.markdown("---")
-        st.write(
-            f"**Tạm tính:** {invoice['Tạm tính']:,.0f} VNĐ"
-        )
-        st.write(
-            f"**Giảm giá:** {invoice['Giảm giá']:,.0f} VNĐ"
-        )
-        st.metric(
-            "💰 TỔNG THANH TOÁN",
-            f"{invoice['Tổng thanh toán']:,.0f} VNĐ",
-        )
-        st.write(
-            f"**Phương thức:** {invoice['Phương thức']}"
-        )
-        st.success(
-            "Cảm ơn quý khách! ❤️")
+   st.title("🔑 Trang Quản Trị & Phân Tích Doanh Thu")
+ 
+   if not st.session_state.admin_logged_in:
+       with st.form("admin_login_form"):
+           password = st.text_input("Nhập mật khẩu quản trị", type="password")
+           login_submitted = st.form_submit_button("🔑 Đăng nhập")
+ 
+           if login_submitted:
+               if password == "123456":
+                   st.session_state.admin_logged_in = True
+                   st.success("Đăng nhập thành công!")
+                   st.rerun()
+               else:
+                   st.error("Mật khẩu không chính xác!")
+ 
+       st.warning(
+           "Vui lòng nhập mật khẩu và bấm đăng nhập để xem dữ liệu kinh doanh."
+       )
+       st.stop()
+ 
+   col_header_title, col_header_btn = st.columns([4, 1])
+   with col_header_title:
+       st.success("Xác thực quyền Quản trị viên thành công!")
+   with col_header_btn:
+       if st.button("🔒 Đăng xuất"):
+           st.session_state.admin_logged_in = False
+           st.rerun()
+ 
+   # Phân tách trang quản trị thành các tab rõ ràng
+   tab1, tab2, tab3 = st.tabs(
+       [
+           "📋 Danh sách thực đơn",
+           "💰 Doanh thu & Nhật ký giao dịch",
+           "📊 Thống kê & Phân tích bán hàng REAL-TIME",
+       ]
+   )
+ 
+   # --- TAB 1: DANH SÁCH THỰC ĐƠN ---
+   with tab1:
+       st.subheader("Menu hiện hành của nhà hàng")
+       data = []
+       for category in menu:
+           for item, price in menu[category].items():
+               data.append([category, item, price])
+ 
+       df_menu = pd.DataFrame(
+           data, columns=["Phân loại", "Tên món", "Đơn giá (VNĐ)"]
+       )
+       st.dataframe(df_menu, use_container_width=True, hide_index=True)
+ 
+   with tab2:
+       st.subheader("Doanh thu & Hóa đơn thực tế từ khách gọi")
+ 
+       # Cập nhật đọc trực tiếp từ tệp tin CSV để đảm bảo chính xác đồng bộ
+       if os.path.exists(CSV_FILE):
+           try:
+               df_history = pd.read_csv(CSV_FILE)
+           except Exception:
+               df_history = pd.DataFrame()
+       else:
+           df_history = pd.DataFrame()
+ 
+       if not df_history.empty:
+           tong_doanh_thu = df_history["Thành tiền"].sum()
+ 
+           col_met1, col_met2 = st.columns(2)
+           col_met1.metric(
+               "Tổng doanh thu tích lũy (Real-time)", f"{tong_doanh_thu:,.0f} VNĐ"
+           )
+           col_met2.metric(
+               "Số lượng món đã phục vụ", f"{df_history['Số lượng'].sum()} phần"
+           )
+ 
+           st.markdown("---")
+           st.subheader("📅 Thống kê doanh thu theo Ngày")
+ 
+           # Trích xuất ngày từ trường thời gian thật
+           df_history["Ngày"] = pd.to_datetime(df_history["Thời gian"]).dt.date
+           df_daily_revenue = (
+df_history.groupby("Ngày")["Thành tiền"].sum().reset_index()
+           )
+           df_daily_revenue.columns = ["Ngày", "Doanh thu (VNĐ)"]
+ 
+           col_chart_day, col_table_day = st.columns([1.5, 1])
+           with col_chart_day:
+               st.write("**Biểu đồ doanh thu hàng ngày:**")
+               st.bar_chart(df_daily_revenue.set_index("Ngày")["Doanh thu (VNĐ)"])
+ 
+           with col_table_day:
+               st.write("**Bảng kê doanh thu theo ngày:**")
+               st.dataframe(
+                   df_daily_revenue.style.format(
+                       {"Doanh thu (VNĐ)": "{:,.0f} VNĐ"}
+                   ),
+                   use_container_width=True,
+                   hide_index=True,
+               )
+ 
+           st.markdown("---")
+           st.subheader("Chi tiết lịch sử thanh toán thực tế")
+           st.dataframe(
+               df_history[["Thời gian", "Bàn", "Tên món", "Số lượng", "Thành tiền"]],
+               use_container_width=True,
+               hide_index=True,
+           )
+       else:
+           st.info(
+               "Hệ thống chưa ghi nhận bất kỳ giao dịch thanh toán nào từ khách hàng."
+           )
+ 
+   with tab3:
+       st.subheader("📊 Phân tích số liệu và Khung giờ vàng")
+ 
+       # Cập nhật đọc trực tiếp từ tệp tin CSV
+       if os.path.exists(CSV_FILE):
+           try:
+               df_anal = pd.read_csv(CSV_FILE)
+           except Exception:
+               df_anal = pd.DataFrame()
+       else:
+           df_anal = pd.DataFrame()
+ 
+       if not df_anal.empty:
+           df_anal["Thời gian"] = pd.to_datetime(df_anal["Thời gian"])
+           df_anal["Giờ"] = df_anal["Thời gian"].dt.hour
+           df_anal["Tháng-Năm"] = df_anal["Thời gian"].dt.strftime("%m/%Y")
+ 
+           # 1. Tìm các chỉ số vàng từ dữ liệu thực tế
+           best_seller = df_anal.groupby("Tên món")["Số lượng"].sum().idxmax()
+           best_seller_qty = df_anal.groupby("Tên món")["Số lượng"].sum().max()
+ 
+           hourly_sales = df_anal.groupby("Giờ")["Số lượng"].sum()
+           best_hour = hourly_sales.idxmax()
+           best_hour_qty = hourly_sales.max()
+ 
+           best_month = (
+               df_anal.groupby("Tháng-Năm")["Thành tiền"].sum().idxmax()
+           )
+           best_month_rev = (
+               df_anal.groupby("Tháng-Năm")["Thành tiền"].sum().max()
+           )
+ 
+           col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
+           with col_kpi1:
+               st.info("🏆 MÓN BÁN CHẠY NHẤT")
+               st.metric(label=best_seller, value=f"{best_seller_qty} phần")
+           with col_kpi2:
+               st.warning("⚡ KHUNG GIỜ VÀNG (Đông khách nhất)")
+               st.metric(
+                   label=f"Khung giờ: {best_hour:02d}:00 - {(best_hour+1):02d}:00",
+value=f"{best_hour_qty} phần",
+               )
+           with col_kpi3:
+               st.success("📅 THÁNG DOANH THU ĐỈNH ĐIỂM")
+               st.metric(label=f"Tháng {best_month}", value=f"{best_month_rev:,.0f} VNĐ")
+ 
+           st.markdown("---")
+ 
+           # Phân tích chi tiết lượng bán/doanh thu từng món ăn
+           st.write("### 🍔 Doanh thu & Số lượng tiêu thụ của từng món ăn")
+           summary_mon = (
+               df_anal.groupby("Tên món")
+               .agg(
+                   Số_lượng_bán=("Số lượng", "sum"),
+                   Doanh_thu=("Thành tiền", "sum"),
+               )
+               .reset_index()
+           )
+           summary_mon = summary_mon.sort_values(
+               by="Số_lượng_bán", ascending=False
+           )
+ 
+           col_chart1, col_table1 = st.columns([1.5, 1])
+           with col_chart1:
+               st.write("**Biểu đồ cột thể hiện Tổng số lượng bán ra:**")
+               st.bar_chart(summary_mon.set_index("Tên món")["Số_lượng_bán"])
+           with col_table1:
+               st.write("**Số liệu doanh thu thực tế từng món:**")
+               st.dataframe(
+                   summary_mon.style.format({"Doanh_thu": "{:,.0f} VNĐ"}),
+                   use_container_width=True,
+                   hide_index=True,
+               )
+ 
+           st.markdown("---")
+ 
+           # Phân tích khung giờ vàng bán chạy trong ngày (0h - 23h)
+           st.write("### ⏰ Thống kê lượng khách đặt theo Khung giờ (0h - 23h)")
+           summary_gio = (
+               df_anal.groupby("Giờ")
+               .agg(
+                   Số_lượng_món=("Số lượng", "sum"),
+                   Doanh_thu=("Thành tiền", "sum"),
+               )
+               .reset_index()
+           )
+ 
+           all_hours = pd.DataFrame({"Giờ": range(24)})
+           summary_gio = pd.merge(
+               all_hours, summary_gio, on="Giờ", how="left"
+           ).fillna(0)
+ 
+           col_chart2, col_info2 = st.columns([1.5, 1])
+           with col_chart2:
+               st.write("**Biểu đồ lượng bán theo từng khung giờ trong ngày:**")
+               st.bar_chart(summary_gio.set_index("Giờ")["Số_lượng_món"])
+           with col_info2:
+               st.write("**Thời điểm bán chạy nhất trong ngày:**")
+               st.markdown(
+                   f"👉 Khung giờ đắt khách nhất hiện tại dựa trên hóa đơn thực tế là từ **{best_hour:02d}:00 - {(best_hour+1):02d}:00** với tổng cộng **{best_hour_qty} phần** được thanh toán."
+               )
+               st.dataframe(
+                   summary_gio[summary_gio["Số_lượng_món"] > 0].style.format(
+                       {"Doanh_thu": "{:,.0f} VNĐ"}
+                   ),
+                   use_container_width=True,
+hide_index=True,
+               )
+ 
+           st.markdown("---")
+ 
+           # Phân tích biến động doanh thu theo tháng
+           st.write("### 📅 Doanh thu bán hàng theo Tháng")
+           df_anal["Tháng_Số"] = df_anal["Thời gian"].dt.month
+           summary_thang = (
+               df_anal.groupby(["Tháng_Số", "Tháng-Năm"])
+               .agg(
+                   Số_lượng_bán=("Số lượng", "sum"),
+                   Doanh_thu=("Thành tiền", "sum"),
+               )
+               .reset_index()
+               .sort_values("Tháng_Số")
+           )
+ 
+           col_chart3, col_table3 = st.columns([1.5, 1])
+           with col_chart3:
+               st.write("**Biểu đồ cột tăng trưởng doanh thu qua các tháng:**")
+               st.bar_chart(summary_thang.set_index("Tháng-Năm")["Doanh_thu"])
+           with col_table3:
+               st.write("**Tổng doanh thu chi tiết từng tháng:**")
+               st.dataframe(
+                   summary_thang[
+                       ["Tháng-Năm", "Số_lượng_bán", "Doanh_thu"]
+                   ].style.format({"Doanh_thu": "{:,.0f} VNĐ"}),
+                   use_container_width=True,
+                   hide_index=True,
+               )
+       else:
+           st.info(
+               "Chưa có dữ liệu giao dịch để thống kê. Hãy tiến hành thanh toán một vài đơn hàng trước."
+
             
           
